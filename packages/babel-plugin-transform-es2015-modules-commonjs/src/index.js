@@ -394,7 +394,13 @@ export default function () {
                     remaps[specifier.local.name] = uid;
                   } else {
                     const varDecl = t.variableDeclaration("var", [
-                      t.variableDeclarator(specifier.local, t.callExpression(this.addHelper("interopRequireWildcard"), [uid]))
+                      t.variableDeclarator(
+                        specifier.local,
+                        t.callExpression(
+                          this.addHelper("interopRequireWildcard"),
+                          [uid]
+                        )
+                      )
                     ]);
 
                     if (maxBlockHoist > 0) {
