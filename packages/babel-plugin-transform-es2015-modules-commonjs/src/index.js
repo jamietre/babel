@@ -148,6 +148,7 @@ export default function () {
           this.ranCommonJS = true;
 
           let strict = !!this.opts.strict;
+          let noMangle = !!this.opts.noMangle;
 
           let { scope } = path;
 
@@ -161,7 +162,7 @@ export default function () {
           let hasNamedExport = false;
           let hasImports = false;
 
-          let body = path.get("body");
+          let body: Array<Object> = path.get("body");
           let imports = Object.create(null);
           let exports = Object.create(null);
 
@@ -178,7 +179,7 @@ export default function () {
               type: "Identifier"
             };
           }
-
+          
           function checkExportType(exportName) {
             if (exportName === 'default') {
               hasDefaultExport = true;
@@ -234,6 +235,7 @@ export default function () {
 
             if (path.isImportDeclaration()) {
               hasImports = true;
+
               let key = path.node.source.value;
               let importsEntry = imports[key] || {
                 specifiers: [],
@@ -251,6 +253,7 @@ export default function () {
               }
 
               imports[key] = importsEntry;
+
               path.remove();
             } else if (path.isExportDefaultDeclaration()) {
               hasDefaultExport = true;
@@ -290,16 +293,13 @@ export default function () {
               let declaration = path.get("declaration");
               if (declaration.node) {
                 if (declaration.isFunctionDeclaration()) {
-
                   let id = declaration.node.id;
-                  
                   checkExportType(id.name);
                   addTo(exports, id.name, id);
                   topNodes.push(buildExportsAssignment(id, id));
                   path.replaceWith(declaration.node);
                 } else if (declaration.isClassDeclaration()) {
                   let id = declaration.node.id;
-                  
                   checkExportType(id.name);
                   addTo(exports, id.name, id);
                   path.replaceWithMultiple([
@@ -346,13 +346,10 @@ export default function () {
                       checkExportType(specifier.node.exported.name);
 
                       if (specifier.node.local.name === "default") {
-                        topNodes.push(buildExportsFrom(t.stringLiteral(specifier.node.exported.name), 
-                          t.memberExpression(t.callExpression(this.addHelper("interopRequireDefault"), [ref]), specifier.node.local)));
+                        topNodes.push(buildExportsFrom(t.stringLiteral(specifier.node.exported.name), t.memberExpression(t.callExpression(this.addHelper("interopRequireDefault"), [ref]), specifier.node.local)));
                       } else {
-                        topNodes.push(buildExportsFrom(t.stringLiteral(specifier.node.exported.name), 
-                          t.memberExpression(ref, specifier.node.local)));
+                        topNodes.push(buildExportsFrom(t.stringLiteral(specifier.node.exported.name), t.memberExpression(ref, specifier.node.local)));
                       }
-
                       nonHoistedExportNames[specifier.node.exported.name] = true;
                     }
                   }
@@ -383,12 +380,12 @@ export default function () {
           for (let source in imports) {
             let {specifiers, maxBlockHoist} = imports[source];
             if (specifiers.length) {
-              
               let uid = addRequire(source, maxBlockHoist);
+              
+              let wildcard;
 
               for (let i = 0; i < specifiers.length; i++) {
                 let specifier = specifiers[i];
-                
                 if (t.isImportNamespaceSpecifier(specifier)) {
                   if (strict) {
                     remaps[specifier.local.name] = uid;
@@ -396,8 +393,8 @@ export default function () {
                     const varDecl = t.variableDeclaration("var", [
                       t.variableDeclarator(
                         specifier.local,
-                        t.callExpression(
-                          this.addHelper("interopRequireWildcard"),
+						t.callExpression(
+							this.addHelper("interopRequireWildcard"), 
                           [uid]
                         )
                       )
@@ -409,6 +406,7 @@ export default function () {
 
                     topNodes.push(varDecl);
                   }
+                  wildcard = specifier.local;
                 } else if (t.isImportDefaultSpecifier(specifier)) {
                   specifiers[i] = t.importSpecifier(specifier.local, t.identifier("default"));
                 }
@@ -418,17 +416,45 @@ export default function () {
                 if (t.isImportSpecifier(specifier)) {
                   let target = uid;
                   if (specifier.imported.name === "default") {
+                    if (noMangle) {
                       target = specifier.local;
                       
-                      let requireDefault = this.addHelper("interopRequireDefault");
-                      var callExpression = t.callExpression(requireDefault, [uid]);
-                      let declaration = t.memberExpression(callExpression, getIdentifier("default"));
-                      topNodes.push(t.variableDeclaration("var", [
+                      const requireDefault = this.addHelper("interopRequireDefault");
+                      const callExpression = t.callExpression(requireDefault, [uid]);
+                      const declaration = t.memberExpression(callExpression, getIdentifier("default"));
+                      const varDecl = t.variableDeclaration("var", [
                         t.variableDeclarator(target, declaration)
-                      ]));
+                      ]);
+
+                      if (maxBlockHoist > 0) {
+                        varDecl._blockHoist = maxBlockHoist;
+                      }
+
+                      topNodes.push(varDecl);
                     } else {
+                      if (wildcard) {
+                        target = wildcard; 
+                      } else {
+                        target = wildcard = path.scope.generateUidIdentifier(uid.name);
+                        const varDecl = t.variableDeclaration("var", [
+                          t.variableDeclarator(
+                            target,
+                            t.callExpression(
+                              this.addHelper("interopRequireDefault"),
+                              [uid]
+                            )
+                          )
+                        ]);
+
+                        if (maxBlockHoist > 0) {
+                          varDecl._blockHoist = maxBlockHoist;
+                        }
+
+                        topNodes.push(varDecl);
+                      }
+                    }
+                  } else if (noMangle) {
                     // is a named import
-                    
                     target = specifier.local;
 
                       const varDecl = t.variableDeclaration("var", [
@@ -482,21 +508,19 @@ export default function () {
             topNodes.unshift(declar);
           }
 
-          /*
-          console.log({
-            "addExports": this.opts.addExports,
-            "hasDefaultExport": hasDefaultExport,
-            "hasNamedExport": hasNamedExport
-          })
-          */
-          
           path.unshiftContainer("body", topNodes);
 
           if (this.opts.addExports && hasDefaultExport && !hasNamedExport) {
              path.pushContainer("body", template("module.exports = exports['default']")());
           }
 
-          path.traverse(reassignmentVisitor, { remaps, scope, exports });
+          path.traverse(reassignmentVisitor, {
+            remaps,
+            scope,
+            exports,
+            requeueInParent: (newPath) => path.requeue(newPath),
+          });
+
         }
       }
     }
