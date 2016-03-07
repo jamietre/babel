@@ -157,9 +157,11 @@ export default function () {
           scope.rename("require");
 
           let hasExports = false;
+          let hasDefaultExport = false;
+          let hasNamedExport = false;
           let hasImports = false;
 
-          let body: Array<Object> = path.get("body");
+          let body = path.get("body");
           let imports = Object.create(null);
           let exports = Object.create(null);
 
@@ -170,6 +172,13 @@ export default function () {
 
           let requires = Object.create(null);
 
+          function getIdentifier(name) {
+            return {
+              name: name,
+              type: "Identifier"
+            };
+          }
+          
           function addRequire(source, blockHoist) {
             let cached = requires[source];
             if (cached) return cached;
@@ -189,6 +198,14 @@ export default function () {
             topNodes.push(varDecl);
 
             return requires[source] = ref;
+          }
+
+          function checkExportType(exportName) {
+            if (exportName === 'default') {
+              hasDefaultExport = true;
+            } else {
+              hasNamedExport = true;
+            }
           }
 
           function addTo(obj, key, arr) {
@@ -211,7 +228,6 @@ export default function () {
 
             if (path.isImportDeclaration()) {
               hasImports = true;
-
               let key = path.node.source.value;
               let importsEntry = imports[key] || {
                 specifiers: [],
@@ -228,9 +244,9 @@ export default function () {
               }
 
               imports[key] = importsEntry;
-
               path.remove();
             } else if (path.isExportDefaultDeclaration()) {
+              hasDefaultExport = true;
               let declaration = path.get("declaration");
               if (declaration.isFunctionDeclaration()) {
                 let id = declaration.node.id;
@@ -267,12 +283,17 @@ export default function () {
               let declaration = path.get("declaration");
               if (declaration.node) {
                 if (declaration.isFunctionDeclaration()) {
+
                   let id = declaration.node.id;
+                  
+                  checkExportType(id.name);
                   addTo(exports, id.name, id);
                   topNodes.push(buildExportsAssignment(id, id));
                   path.replaceWith(declaration.node);
                 } else if (declaration.isClassDeclaration()) {
                   let id = declaration.node.id;
+                  
+                  checkExportType(id.name);
                   addTo(exports, id.name, id);
                   path.replaceWithMultiple([
                     declaration.node,
@@ -287,6 +308,8 @@ export default function () {
                     let init = decl.get("init");
                     if (!init.node) init.replaceWith(t.identifier("undefined"));
 
+                    hasNamedExport = true; // "default" is not a valid symbol name
+                    
                     if (id.isIdentifier()) {
                       addTo(exports, id.node.name, id.node);
                       init.replaceWith(buildExportsAssignment(id.node, init.node).expression);
@@ -313,17 +336,23 @@ export default function () {
                     } else if (specifier.isExportDefaultSpecifier()) {
                       // todo
                     } else if (specifier.isExportSpecifier()) {
+                      checkExportType(specifier.node.exported.name);
+
                       if (specifier.node.local.name === "default") {
-                        topNodes.push(buildExportsFrom(t.stringLiteral(specifier.node.exported.name), t.memberExpression(t.callExpression(this.addHelper("interopRequireDefault"), [ref]), specifier.node.local)));
+                        topNodes.push(buildExportsFrom(t.stringLiteral(specifier.node.exported.name), 
+                          t.memberExpression(t.callExpression(this.addHelper("interopRequireDefault"), [ref]), specifier.node.local)));
                       } else {
-                        topNodes.push(buildExportsFrom(t.stringLiteral(specifier.node.exported.name), t.memberExpression(ref, specifier.node.local)));
+                        topNodes.push(buildExportsFrom(t.stringLiteral(specifier.node.exported.name), 
+                          t.memberExpression(ref, specifier.node.local)));
                       }
+
                       nonHoistedExportNames[specifier.node.exported.name] = true;
                     }
                   }
                 } else {
                   for (let specifier of specifiers) {
                     if (specifier.isExportSpecifier()) {
+                      checkExportType(specifier.node.exported.name);
                       addTo(exports, specifier.node.local.name, specifier.node.exported);
                       nonHoistedExportNames[specifier.node.exported.name] = true;
                       nodes.push(buildExportsAssignment(specifier.node.exported, specifier.node.local));
@@ -333,6 +362,7 @@ export default function () {
                 path.replaceWithMultiple(nodes);
               }
             } else if (path.isExportAllDeclaration()) {
+              hasNamedExport = true;
               topNodes.push(buildExportAll({
                 OBJECT: addRequire(path.node.source.value, path.node._blockHoist)
               }));
@@ -343,24 +373,21 @@ export default function () {
           for (let source in imports) {
             let {specifiers, maxBlockHoist} = imports[source];
             if (specifiers.length) {
+              
               let uid = addRequire(source, maxBlockHoist);
-
-              let wildcard;
 
               for (let i = 0; i < specifiers.length; i++) {
                 let specifier = specifiers[i];
+                
                 if (t.isImportNamespaceSpecifier(specifier)) {
                   if (strict) {
                     remaps[specifier.local.name] = uid;
                   } else {
                     const varDecl = t.variableDeclaration("var", [
-                      t.variableDeclarator(
-                        specifier.local,
-                        t.callExpression(
-                          this.addHelper("interopRequireWildcard"),
-                          [uid]
-                        )
-                      )
+                      t.variableDeclarator(specifier.local, 
+						t.callExpression(
+							this.addHelper("interopRequireWildcard"), 
+							[uid]))
                     ]);
 
                     if (maxBlockHoist > 0) {
@@ -369,7 +396,6 @@ export default function () {
 
                     topNodes.push(varDecl);
                   }
-                  wildcard = specifier.local;
                 } else if (t.isImportDefaultSpecifier(specifier)) {
                   specifiers[i] = t.importSpecifier(specifier.local, t.identifier("default"));
                 }
@@ -379,18 +405,24 @@ export default function () {
                 if (t.isImportSpecifier(specifier)) {
                   let target = uid;
                   if (specifier.imported.name === "default") {
-                    if (wildcard) {
-                      target = wildcard;
+                      target = specifier.local;
+                      
+                      let requireDefault = this.addHelper("interopRequireDefault");
+                      var callExpression = t.callExpression(requireDefault, [uid]);
+                      let declaration = t.memberExpression(callExpression, getIdentifier("default"));
+                      topNodes.push(t.variableDeclaration("var", [
+                        t.variableDeclarator(target, declaration)
+                      ]));
                     } else {
-                      target = wildcard = path.scope.generateUidIdentifier(uid.name);
+                    // is a named import
+                    
+                    target = specifier.local;
+
                       const varDecl = t.variableDeclaration("var", [
                         t.variableDeclarator(
                           target,
-                          t.callExpression(
-                            this.addHelper("interopRequireDefault"),
-                            [uid]
+                        t.memberExpression(uid, specifier.imported)
                           )
-                        )
                       ]);
 
                       if (maxBlockHoist > 0) {
@@ -399,8 +431,10 @@ export default function () {
 
                       topNodes.push(varDecl);
                     }
+                  
+                  if (specifier.local.name !== target.name) {
+                    remaps[specifier.local.name] = t.memberExpression(target, t.cloneWithoutLoc(specifier.imported));
                   }
-                  remaps[specifier.local.name] = t.memberExpression(target, t.cloneWithoutLoc(specifier.imported));
                 }
               }
             } else {
@@ -433,13 +467,23 @@ export default function () {
             topNodes.unshift(declar);
           }
 
+          /*
+          console.log({
+            "addExports": this.opts.addExports,
+            "hasDefaultExport": hasDefaultExport,
+            "hasNamedExport": hasNamedExport
+          })
+          */
+          
           path.unshiftContainer("body", topNodes);
-          path.traverse(reassignmentVisitor, {
-            remaps,
-            scope,
-            exports,
-            requeueInParent: (newPath) => path.requeue(newPath),
-          });
+          path.traverse(reassignmentVisitor, { remaps, scope, exports });
+
+          if (this.opts.addExports && hasDefaultExport && !hasNamedExport) {
+             path.pushContainer("body", template("module.exports = exports['default']")());
+          }
+
+
+          path.traverse(reassignmentVisitor, { remaps, scope, exports });
         }
       }
     }
