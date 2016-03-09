@@ -1,4 +1,5 @@
 /* eslint max-len: 0 */
+/* global Symbol */
 
 import { basename, extname } from "path";
 import template from "babel-template";
@@ -179,7 +180,7 @@ export default function () {
               type: "Identifier"
             };
           }
-          
+
           function checkExportType(exportName) {
             if (exportName === 'default') {
               hasDefaultExport = true;
@@ -187,7 +188,7 @@ export default function () {
               hasNamedExport = true;
             }
           }
-          
+         
           function addRequire(source, blockHoist) {
             let cached = requires[source];
             if (cached) return cached;
@@ -381,7 +382,7 @@ export default function () {
             let {specifiers, maxBlockHoist} = imports[source];
             if (specifiers.length) {
               let uid = addRequire(source, maxBlockHoist);
-              
+
               let wildcard;
 
               for (let i = 0; i < specifiers.length; i++) {
@@ -393,8 +394,8 @@ export default function () {
                     const varDecl = t.variableDeclaration("var", [
                       t.variableDeclarator(
                         specifier.local,
-						t.callExpression(
-							this.addHelper("interopRequireWildcard"), 
+                        t.callExpression(
+                          this.addHelper("interopRequireWildcard"),
                           [uid]
                         )
                       )
@@ -432,16 +433,16 @@ export default function () {
 
                       topNodes.push(varDecl);
                     } else {
-                      if (wildcard) {
-                        target = wildcard; 
-                      } else {
-                        target = wildcard = path.scope.generateUidIdentifier(uid.name);
-                        const varDecl = t.variableDeclaration("var", [
-                          t.variableDeclarator(
-                            target,
-                            t.callExpression(
-                              this.addHelper("interopRequireDefault"),
-                              [uid]
+                    if (wildcard) {
+                      target = wildcard;
+                    } else {
+                      target = wildcard = path.scope.generateUidIdentifier(uid.name);
+                      const varDecl = t.variableDeclaration("var", [
+                        t.variableDeclarator(
+                          target,
+                          t.callExpression(
+                            this.addHelper("interopRequireDefault"),
+                            [uid]
                             )
                           )
                         ]);
@@ -457,9 +458,9 @@ export default function () {
                     // is a named import
                     target = specifier.local;
 
-                      const varDecl = t.variableDeclaration("var", [
-                        t.variableDeclarator(
-                          target,
+                    const varDecl = t.variableDeclaration("var", [
+                      t.variableDeclarator(
+                        target,
                         t.memberExpression(uid, specifier.imported)
                           )
                       ]);
@@ -470,11 +471,11 @@ export default function () {
 
                       topNodes.push(varDecl);
                     }
-                  
+                      
                   if (specifier.local.name !== target.name) {
-                    remaps[specifier.local.name] = t.memberExpression(target, t.cloneWithoutLoc(specifier.imported));
-                  }
+                  remaps[specifier.local.name] = t.memberExpression(target, t.cloneWithoutLoc(specifier.imported));
                 }
+              }
               }
             } else {
               // bare import
