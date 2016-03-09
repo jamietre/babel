@@ -443,17 +443,17 @@ export default function () {
                           t.callExpression(
                             this.addHelper("interopRequireDefault"),
                             [uid]
-                            )
                           )
-                        ]);
+                        )
+                      ]);
 
-                        if (maxBlockHoist > 0) {
-                          varDecl._blockHoist = maxBlockHoist;
-                        }
-
-                        topNodes.push(varDecl);
+                      if (maxBlockHoist > 0) {
+                        varDecl._blockHoist = maxBlockHoist;
                       }
+
+                      topNodes.push(varDecl);
                     }
+                  }
                   } else if (noMangle) {
                     // is a named import
                     target = specifier.local;
