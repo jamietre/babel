@@ -367,9 +367,8 @@ export default function () {
                 path.replaceWithMultiple(nodes);
               }
             } else if (path.isExportAllDeclaration()) {
-              let exportNode = buildExportAll({
               hasNamedExport = true;
-              topNodes.push(buildExportAll({
+              let exportNode = buildExportAll({
                 OBJECT: addRequire(path.node.source.value, path.node._blockHoist)
               });
               exportNode.loc = path.node.loc;
