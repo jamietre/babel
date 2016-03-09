@@ -1,4 +1,5 @@
 /* eslint max-len: 0 */
+/* global Symbol */
 
 import { basename, extname } from "path";
 import template from "babel-template";
@@ -286,7 +287,7 @@ export default function () {
               let declaration = path.get("declaration");
               if (declaration.node) {
                 if (declaration.isFunctionDeclaration()) {
-                  let id = declaration.node.id;
+                  let id = declaration.node.id;                 
                   checkExportType(id.name);
                   addTo(exports, id.name, id);
                   topNodes.push(buildExportsAssignment(id, id));
@@ -369,22 +370,22 @@ export default function () {
 
           for (let source in imports) {
             let {specifiers, maxBlockHoist} = imports[source];
-            if (specifiers.length) {
+            if (specifiers.length) {              
               let uid = addRequire(source, maxBlockHoist);
 
               let wildcard;
 
               for (let i = 0; i < specifiers.length; i++) {
-                let specifier = specifiers[i];
+                let specifier = specifiers[i];                
                 if (t.isImportNamespaceSpecifier(specifier)) {
                   if (strict) {
                     remaps[specifier.local.name] = uid;
                   } else {
                     const varDecl = t.variableDeclaration("var", [
                       t.variableDeclarator(
-                        specifier.local,
+                        specifier.local, 
                         t.callExpression(
-                          this.addHelper("interopRequireWildcard"),
+                          this.addHelper("interopRequireWildcard"), 
                           [uid]
                         )
                       )
@@ -422,16 +423,16 @@ export default function () {
 
                       topNodes.push(varDecl);
                     } else {
-                    if (wildcard) {
-                      target = wildcard;
-                    } else {
-                      target = wildcard = path.scope.generateUidIdentifier(uid.name);
-                      const varDecl = t.variableDeclaration("var", [
-                        t.variableDeclarator(
-                          target,
-                          t.callExpression(
-                            this.addHelper("interopRequireDefault"),
-                            [uid]
+                      if (wildcard) {
+                        target = wildcard; 
+                      } else {
+                        target = wildcard = path.scope.generateUidIdentifier(uid.name);
+                        const varDecl = t.variableDeclaration("var", [
+                          t.variableDeclarator(
+                            target,
+                            t.callExpression(
+                              this.addHelper("interopRequireDefault"),
+                              [uid]
                             )
                           )
                         ]);
@@ -451,20 +452,20 @@ export default function () {
                       t.variableDeclarator(
                         target,
                         t.memberExpression(uid, specifier.imported)
-                          )
-                      ]);
+                      )
+                    ]);
 
-                      if (maxBlockHoist > 0) {
-                        varDecl._blockHoist = maxBlockHoist;
-                      }
-
-                      topNodes.push(varDecl);
+                    if (maxBlockHoist > 0) {
+                      varDecl._blockHoist = maxBlockHoist;
                     }
+
+                    topNodes.push(varDecl);
+                  }
                       
                   if (specifier.local.name !== target.name) {
-                  remaps[specifier.local.name] = t.memberExpression(target, t.cloneWithoutLoc(specifier.imported));
-                }
-              }
+                    remaps[specifier.local.name] = t.memberExpression(target, t.cloneWithoutLoc(specifier.imported));
+                  }
+                } 
               }
             } else {
               // bare import
