@@ -13,8 +13,16 @@ let buildRest = template(`
   }
 `);
 
-let loadRest = template(`
+let restIndex = template(`
   ARGUMENTS.length <= INDEX ? undefined : ARGUMENTS[INDEX]
+`);
+
+let restIndexImpure = template(`
+  REF = INDEX, ARGUMENTS.length <= REF ? undefined : ARGUMENTS[REF]
+`);
+
+let restLength = template(`
+  ARGUMENTS.length <= OFFSET ? 0 : ARGUMENTS.length - OFFSET
 `);
 
 let memberExpressionOptimisationVisitor = {
@@ -26,11 +34,13 @@ let memberExpressionOptimisationVisitor = {
   },
 
   Flow(path) {
+    // Do not skip TypeCastExpressions as the contain valid non flow code
+    if (path.isTypeCastExpression()) return;
     // don't touch reference in type annotations
     path.skip();
   },
 
-  Function(path, state) {
+  "Function|ClassProperty": function (path, state) {
     // Detect whether any reference to rest is contained in nested functions to
     // determine if deopt is necessary.
     let oldNoOptimise = state.noOptimise;
@@ -155,21 +165,29 @@ function optimiseIndexGetter(path, argsId, offset) {
     index = t.binaryExpression("+", path.parent.property, t.numericLiteral(offset));
   }
 
-  path.parentPath.replaceWith(loadRest({
-    ARGUMENTS: argsId,
-    INDEX: index,
-  }));
+  const { scope } = path;
+  if (!scope.isPure(index)) {
+    let temp = scope.generateUidIdentifierBasedOnNode(index);
+    scope.push({id: temp, kind: "var"});
+    path.parentPath.replaceWith(restIndexImpure({
+      ARGUMENTS: argsId,
+      INDEX: index,
+      REF: temp
+    }));
+  } else {
+    path.parentPath.replaceWith(restIndex({
+      ARGUMENTS: argsId,
+      INDEX: index,
+    }));
+  }
 }
 
-function optimiseLengthGetter(path, argsLengthExpression, argsId, offset) {
+function optimiseLengthGetter(path, argsId, offset) {
   if (offset) {
-    path.parentPath.replaceWith(
-      t.binaryExpression(
-        "-",
-        argsLengthExpression,
-        t.numericLiteral(offset),
-      )
-    );
+    path.parentPath.replaceWith(restLength({
+      ARGUMENTS: argsId,
+      OFFSET: t.numericLiteral(offset),
+    }));
   } else {
     path.replaceWith(argsId);
   }
@@ -183,10 +201,6 @@ export let visitor = {
     let rest = node.params.pop().argument;
 
     let argsId = t.identifier("arguments");
-    let argsLengthExpression = t.memberExpression(
-      argsId,
-      t.identifier("length"),
-    );
 
     // otherwise `arguments` will be remapped in arrow functions
     argsId._shadowedFunctionLiteral = path;
@@ -230,7 +244,7 @@ export let visitor = {
             optimiseIndexGetter(path, argsId, state.offset);
             break;
           case "lengthGetter":
-            optimiseLengthGetter(path, argsLengthExpression, argsId, state.offset);
+            optimiseLengthGetter(path, argsId, state.offset);
             break;
           default:
             path.replaceWith(argsId);

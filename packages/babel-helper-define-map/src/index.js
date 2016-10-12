@@ -1,8 +1,8 @@
 /* eslint max-len: 0 */
 
 import nameFunction from "babel-helper-function-name";
-import each from "lodash/collection/each";
-import has from "lodash/object/has";
+import each from "lodash/each";
+import has from "lodash/has";
 import * as t from "babel-types";
 
 function toKind(node: Object) {
@@ -55,6 +55,7 @@ export function push(mutatorMap: Object, node: Object, kind: string, file, scope
     value = node.value;
   } else if (t.isObjectMethod(node) || t.isClassMethod(node)) {
     value = t.functionExpression(null, node.params, node.body, node.generator, node.async);
+    value.returnType = node.returnType;
   }
 
   let inheritedKind = toKind(node);

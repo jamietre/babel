@@ -5,6 +5,7 @@ var sourceMap            = require("source-map");
 var assert               = require("assert");
 var File                 = require("../lib/transformation/file").default;
 var Plugin               = require("../lib/transformation/plugin");
+var generator            = require("babel-generator").default;
 
 function assertIgnored(result) {
   assert.ok(result.ignored);
@@ -22,6 +23,77 @@ function transformAsync(code, opts) {
     }
   };
 }
+
+suite("parser and generator options", function() {
+  var recast = {
+    parse: function(code, opts) {
+      return opts.parser.parse(code);
+    },
+    print: function(ast) {
+      return generator(ast);
+    }
+  };
+
+  function newTransform(string) {
+    return babel.transform(string, {
+      parserOpts: {
+        parser: recast.parse,
+        plugins: ["flow"],
+        allowImportExportEverywhere: true
+      },
+      generatorOpts: {
+        generator: recast.print
+      }
+    });
+  }
+
+  test("options", function() {
+    var string = "original;";
+    assert.deepEqual(newTransform(string).ast, babel.transform(string).ast);
+    assert.equal(newTransform(string).code, string);
+  });
+
+  test("experimental syntax", function() {
+    var experimental = "var a: number = 1;";
+
+    assert.deepEqual(newTransform(experimental).ast, babel.transform(experimental, {
+      parserOpts: {
+        plugins: ["flow"]
+      }
+    }).ast);
+    assert.equal(newTransform(experimental).code, experimental);
+
+    function newTransformWithPlugins(string) {
+      return babel.transform(string, {
+        plugins: [__dirname + "/../../babel-plugin-syntax-flow"],
+        parserOpts: {
+          parser: recast.parse
+        },
+        generatorOpts: {
+          generator: recast.print
+        }
+      });
+    }
+
+    assert.deepEqual(newTransformWithPlugins(experimental).ast, babel.transform(experimental, {
+      parserOpts: {
+        plugins: ["flow"]
+      }
+    }).ast);
+    assert.equal(newTransformWithPlugins(experimental).code, experimental);
+  });
+
+  test("other options", function() {
+    var experimental = "if (true) {\n  import a from 'a';\n}";
+
+    assert.notEqual(newTransform(experimental).ast, babel.transform(experimental, {
+      parserOpts: {
+        allowImportExportEverywhere: true
+      }
+    }).ast);
+    assert.equal(newTransform(experimental).code, experimental);
+  });
+});
 
 suite("api", function () {
   test("analyze", function () {
@@ -74,6 +146,38 @@ suite("api", function () {
     }).then(function (result) {
       assert.ok(result.options.plugins[0][0].manipulateOptions.toString().indexOf("jsx") >= 0);
     });
+  });
+
+  test("option wrapPluginVisitorMethod", function () {
+    var calledRaw = 0;
+    var calledIntercept = 0;
+
+    babel.transform("function foo() { bar(foobar); }", {
+      wrapPluginVisitorMethod: function (pluginAlias, visitorType, callback) {
+        if (pluginAlias !== "foobar") {
+          return callback;
+        }
+
+        assert.equal(visitorType, "enter");
+
+        return function () {
+          calledIntercept++;
+          return callback.apply(this, arguments);
+        };
+      },
+
+      plugins: [new Plugin({
+        name: "foobar",
+        visitor: {
+          "Program|Identifier": function () {
+            calledRaw++;
+          }
+        }
+      })]
+    });
+
+    assert.equal(calledRaw, 4);
+    assert.equal(calledIntercept, 4);
   });
 
   test("pass per preset", function () {
@@ -151,6 +255,28 @@ suite("api", function () {
       '};'
     ].join("\n"), result.code);
 
+  });
+
+  test("handles preset shortcuts (adds babel-preset-)", function () {
+    return assert.throws(
+      function () {
+        babel.transform("", {
+          presets: ["@babel/es2015"]
+        });
+      },
+      /Couldn\'t find preset \"\@babel\/babel\-preset\-es2015\" relative to directory/
+    );
+  });
+
+  test("handles preset shortcuts 2 (adds babel-preset-)", function () {
+    return assert.throws(
+      function () {
+        babel.transform("", {
+          presets: ["@babel/react/optimizations"]
+        });
+      },
+      /Couldn\'t find preset \"\@babel\/babel\-preset\-react\/optimizations\" relative to directory/
+    );
   });
 
   test("source map merging", function () {
@@ -432,23 +558,19 @@ suite("api", function () {
     var oldBabelEnv = process.env.BABEL_ENV;
     var oldNodeEnv = process.env.NODE_ENV;
 
-
-    // This this a global side effect and we need to make sure it's localized
-    // to every test below.
-    function before() {
+    setup(function () {
+      // Tests need to run with the default and specific values for these. They
+      // need to be cleared for each test.
       delete process.env.BABEL_ENV;
       delete process.env.NODE_ENV;
-    }
+    });
 
-
-    afterEach(function () {
+    suiteTeardown(function () {
       process.env.BABEL_ENV = oldBabelEnv;
       process.env.NODE_ENV = oldNodeEnv;
     });
 
     test("default", function () {
-      before();
-
       var result = babel.transform("foo;", {
         env: {
           development: { code: false }
@@ -459,8 +581,6 @@ suite("api", function () {
     });
 
     test("BABEL_ENV", function () {
-      before();
-
       process.env.BABEL_ENV = "foo";
       var result = babel.transform("foo;", {
         env: {
@@ -471,8 +591,6 @@ suite("api", function () {
     });
 
     test("NODE_ENV", function () {
-      before();
-
       process.env.NODE_ENV = "foo";
       var result = babel.transform("foo;", {
         env: {

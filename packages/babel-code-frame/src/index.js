@@ -1,4 +1,3 @@
-import repeating from "repeating";
 import jsTokens from "js-tokens";
 import esutils from "esutils";
 import chalk from "chalk";
@@ -8,16 +7,18 @@ import chalk from "chalk";
  */
 
 let defs = {
-  string:     chalk.red,
-  punctuator: chalk.bold,
-  curly:      chalk.green,
-  parens:     chalk.blue.bold,
-  square:     chalk.yellow,
-  keyword:    chalk.cyan,
-  number:     chalk.magenta,
-  regex:      chalk.magenta,
-  comment:    chalk.grey,
-  invalid:    chalk.inverse
+  keyword:     chalk.cyan,
+  capitalized: chalk.yellow,
+  jsx_tag:     chalk.yellow,
+  punctuator:  chalk.yellow,
+  // bracket:  intentionally omitted.
+  number:      chalk.magenta,
+  string:      chalk.green,
+  regex:       chalk.magenta,
+  comment:     chalk.grey,
+  invalid:     chalk.white.bgRed.bold,
+  gutter:      chalk.grey,
+  marker:      chalk.red.bold,
 };
 
 /**
@@ -27,27 +28,44 @@ let defs = {
 const NEWLINE = /\r\n|[\n\r\u2028\u2029]/;
 
 /**
+ * RegExp to test for what seems to be a JSX tag name.
+ */
+
+const JSX_TAG = /^[a-z][\w-]*$/i;
+
+/**
+ * RegExp to test for the three types of brackets.
+ */
+
+const BRACKET = /^[()\[\]{}]$/;
+
+/**
  * Get the type of token, specifying punctuator type.
  */
 
 function getTokenType(match) {
+  let [offset, text] = match.slice(-2);
   let token = jsTokens.matchToToken(match);
-  if (token.type === "name" && esutils.keyword.isReservedWordES6(token.value)) {
-    return "keyword";
+
+  if (token.type === "name") {
+    if (esutils.keyword.isReservedWordES6(token.value)) {
+      return "keyword";
+    }
+
+    if (
+      JSX_TAG.test(token.value) &&
+      (text[offset - 1] === "<" || text.substr(offset - 2, 2) == "</")
+    ) {
+      return "jsx_tag";
+    }
+
+    if (token.value[0] !== token.value[0].toLowerCase()) {
+      return "capitalized";
+    }
   }
 
-  if (token.type === "punctuator") {
-    switch (token.value) {
-    case "{":
-    case "}":
-      return "curly";
-    case "(":
-    case ")":
-      return "parens";
-    case "[":
-    case "]":
-      return "square";
-    }
+  if (token.type === "punctuator" && BRACKET.test(token.value)) {
+    return "bracket";
   }
 
   return token.type;
@@ -82,11 +100,17 @@ export default function (
   colNumber = Math.max(colNumber, 0);
 
   let highlighted = opts.highlightCode && chalk.supportsColor;
+  let maybeHighlight = (chalkFn, string) => {
+    return highlighted ? chalkFn(string) : string;
+  };
   if (highlighted) rawLines = highlight(rawLines);
 
+  let linesAbove = opts.linesAbove || 2;
+  let linesBelow = opts.linesBelow || 3;
+
   let lines = rawLines.split(NEWLINE);
-  let start = Math.max(lineNumber - 3, 0);
-  let end   = Math.min(lines.length, lineNumber + 3);
+  let start = Math.max(lineNumber - (linesAbove + 1), 0);
+  let end   = Math.min(lines.length, lineNumber + linesBelow);
 
   if (!lineNumber && !colNumber) {
     start = 0;
@@ -100,12 +124,24 @@ export default function (
     let paddedNumber = ` ${number}`.slice(-numberMaxWidth);
     let gutter = ` ${paddedNumber} | `;
     if (number === lineNumber) {
-      let markerLine = colNumber
-        ? `\n ${gutter.replace(/\d/g, " ")}${repeating(" ", colNumber - 1)}^`
-        : "";
-      return `>${gutter}${line}${markerLine}`;
+      let markerLine = "";
+      if (colNumber) {
+        let markerSpacing = line.slice(0, colNumber - 1).replace(/[^\t]/g, " ");
+        markerLine = [
+          "\n ",
+          maybeHighlight(defs.gutter, gutter.replace(/\d/g, " ")),
+          markerSpacing,
+          maybeHighlight(defs.marker, "^")
+        ].join("");
+      }
+      return [
+        maybeHighlight(defs.marker, ">"),
+        maybeHighlight(defs.gutter, gutter),
+        line,
+        markerLine
+      ].join("");
     } else {
-      return ` ${gutter}${line}`;
+      return ` ${maybeHighlight(defs.gutter, gutter)}${line}`;
     }
   }).join("\n");
 

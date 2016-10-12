@@ -100,9 +100,14 @@ export function isReferenced(node: Object, parent: Object): boolean {
       return parent.name !== node;
 
     // no: class { NODE = value; }
+    // yes: class { [NODE] = value; }
     // yes: class { key = NODE; }
     case "ClassProperty":
-      return parent.value === node;
+      if (parent.key === node) {
+        return parent.computed;
+      } else {
+        return parent.value === node;
+      }
 
     // no: import NODE from "foo";
     // no: import * as NODE from "foo";
@@ -119,7 +124,7 @@ export function isReferenced(node: Object, parent: Object): boolean {
     case "ClassExpression":
       return parent.id !== node;
 
-    // yes: class { [NODE](){} }
+    // yes: class { [NODE]() {} }
     case "ClassMethod":
     case "ObjectMethod":
       return parent.key === node && parent.computed;

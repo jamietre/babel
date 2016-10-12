@@ -7,12 +7,11 @@ import convertSourceMap from "convert-source-map";
 import OptionManager from "./options/option-manager";
 import type Pipeline from "../pipeline";
 import PluginPass from "../plugin-pass";
-import shebangRegex from "shebang-regex";
 import { NodePath, Hub, Scope } from "babel-traverse";
 import sourceMap from "source-map";
 import generate from "babel-generator";
 import codeFrame from "babel-code-frame";
-import defaults from "lodash/object/defaults";
+import defaults from "lodash/defaults";
 import traverse from "babel-traverse";
 import Logger from "./logger";
 import Store from "../../store";
@@ -21,8 +20,12 @@ import * as util from  "../../util";
 import path from "path";
 import * as t from "babel-types";
 
+import resolve from "../../helpers/resolve";
+
 import blockHoistPlugin from "../internal-plugins/block-hoist";
 import shadowFunctionsPlugin from "../internal-plugins/shadow-functions";
+
+const shebangRegex = /^#!.*/;
 
 const INTERNAL_PLUGINS = [
   [blockHoistPlugin],
@@ -49,11 +52,9 @@ export default class File extends Store {
     this.opts = this.initOptions(opts);
 
     this.parserOpts = {
-      highlightCode: this.opts.highlightCode,
-      nonStandard:   this.opts.nonStandard,
-      sourceType:    this.opts.sourceType,
-      filename:      this.opts.filename,
-      plugins:       []
+      sourceType:     this.opts.sourceType,
+      sourceFileName: this.opts.filename,
+      plugins:        []
     };
 
     this.pluginVisitors = [];
@@ -391,7 +392,7 @@ export default class File extends Store {
           mergedGenerator.addMapping({
             source: mapping.source,
 
-            original: {
+            original: mapping.source == null ? null : {
               line: mapping.originalLine,
               column: mapping.originalColumn
             },
@@ -410,8 +411,35 @@ export default class File extends Store {
   }
 
   parse(code: string) {
+    let parseCode = parse;
+    let parserOpts = this.opts.parserOpts;
+
+    if (parserOpts) {
+      parserOpts = Object.assign({}, this.parserOpts, parserOpts);
+
+      if (parserOpts.parser) {
+        if (typeof parserOpts.parser === "string") {
+          let dirname = path.dirname(this.opts.filename) || process.cwd();
+          let parser = resolve(parserOpts.parser, dirname);
+          if (parser) {
+            parseCode = require(parser).parse;
+          } else {
+            throw new Error(`Couldn't find parser ${parserOpts.parser} with "parse" method relative to directory ${dirname}`);
+          }
+        } else {
+          parseCode = parserOpts.parser;
+        }
+
+        parserOpts.parser = {
+          parse(source) {
+            return parse(source, parserOpts);
+          }
+        };
+      }
+    }
+
     this.log.debug("Parse start");
-    let ast = parse(code, this.parserOpts);
+    let ast = parseCode(code, parserOpts || this.parserOpts);
     this.log.debug("Parse stop");
     return ast;
   }
@@ -438,13 +466,18 @@ export default class File extends Store {
   transform(): BabelFileResult {
     // In the "pass per preset" mode, we have grouped passes.
     // Otherwise, there is only one plain pluginPasses array.
-    this.pluginPasses.forEach((pluginPasses, index) => {
+    for (let i = 0; i < this.pluginPasses.length; i++) {
+      const pluginPasses = this.pluginPasses[i];
       this.call("pre", pluginPasses);
       this.log.debug("Start transform traverse");
-      traverse(this.ast, traverse.visitors.merge(this.pluginVisitors[index], pluginPasses), this.scope);
+
+      // merge all plugin visitors into a single visitor
+      let visitor = traverse.visitors.merge(this.pluginVisitors[i], pluginPasses, this.opts.wrapPluginVisitorMethod);
+      traverse(this.ast, visitor, this.scope);
+
       this.log.debug("End transform traverse");
       this.call("post", pluginPasses);
-    });
+    }
 
     return this.generate();
   }
@@ -567,9 +600,24 @@ export default class File extends Store {
     let result: BabelFileResult = { ast };
     if (!opts.code) return this.makeResult(result);
 
+    let gen = generate;
+    if (opts.generatorOpts.generator) {
+      gen = opts.generatorOpts.generator;
+
+      if (typeof gen === "string") {
+        let dirname = path.dirname(this.opts.filename) || process.cwd();
+        let generator = resolve(gen, dirname);
+        if (generator) {
+          gen = require(generator).print;
+        } else {
+          throw new Error(`Couldn't find generator ${gen} with "print" method relative to directory ${dirname}`);
+        }
+      }
+    }
+
     this.log.debug("Generation start");
 
-    let _result = generate(ast, opts, this.code);
+    let _result = gen(ast, opts.generatorOpts ? Object.assign(opts, opts.generatorOpts) : opts, this.code);
     result.code = _result.code;
     result.map  = _result.map;
 

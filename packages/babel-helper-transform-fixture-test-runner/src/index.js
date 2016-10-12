@@ -3,7 +3,6 @@
 
 import * as babel from "babel-core";
 import { buildExternalHelpers } from "babel-core";
-import path from "path";
 import getFixtures from "babel-helper-fixtures";
 import sourceMap from "source-map";
 import codeFrame from "babel-code-frame";
@@ -12,14 +11,6 @@ import assert from "assert";
 import chai from "chai";
 import _ from "lodash";
 import "babel-polyfill";
-import register from "babel-register";
-
-register({
-  ignore: [
-    path.resolve(__dirname + "/../.."),
-    "node_modules",
-  ]
-});
 
 let babelHelpers = eval(buildExternalHelpers(null, "var"));
 
@@ -44,7 +35,11 @@ function run(task) {
 
     newOpts.plugins = wrapPackagesArray("plugin", newOpts.plugins);
     newOpts.presets = wrapPackagesArray("preset", newOpts.presets).map(function (val) {
-      return val[0];
+      if (val.length > 2) {
+        throw new Error(`Unexpected extra options ${JSON.stringify(val.slice(2))} passed to preset.`);
+      }
+
+      return val;
     });
 
     return newOpts;
@@ -52,6 +47,7 @@ function run(task) {
 
   let execCode = exec.code;
   let result;
+  let resultExec;
 
   if (execCode) {
     let execOpts = getOpts(exec);
@@ -59,7 +55,7 @@ function run(task) {
     execCode = result.code;
 
     try {
-      runExec(execOpts, execCode);
+      resultExec = runExec(execOpts, execCode);
     } catch (err) {
       err.message = exec.loc + ": " + err.message;
       err.message += codeFrame(execCode);
@@ -95,6 +91,10 @@ function run(task) {
       chai.expect({ line: expect.line, column: expect.column }).to.deep.equal(actual);
     });
   }
+
+  if (execCode && resultExec) {
+    return resultExec;
+  }
 }
 
 function runExec(opts, execCode) {
@@ -121,12 +121,12 @@ export default function (
   let suites = getFixtures(fixturesLoc);
 
   for (let testSuite of suites) {
-    if (_.contains(suiteOpts.ignoreSuites, testSuite.title)) continue;
+    if (_.includes(suiteOpts.ignoreSuites, testSuite.title)) continue;
 
     suite(name + "/" + testSuite.title, function () {
       for (let task of testSuite.tests) {
-        if (_.contains(suiteOpts.ignoreTasks, task.title) ||
-            _.contains(suiteOpts.ignoreTasks, testSuite.title + "/" + task.title)) continue;
+        if (_.includes(suiteOpts.ignoreTasks, task.title) ||
+            _.includes(suiteOpts.ignoreTasks, testSuite.title + "/" + task.title)) continue;
 
         test(task.title, !task.disabled && function () {
           function runTask() {
@@ -156,7 +156,14 @@ export default function (
               return throwMsg === true || err.message.indexOf(throwMsg) >= 0;
             });
           } else {
-            runTask();
+            if (task.exec.code) {
+              let result = run(task);
+              if (result && typeof result.then === "function") {
+                return result;
+              }
+            } else {
+              runTask();
+            }
           }
         });
       }

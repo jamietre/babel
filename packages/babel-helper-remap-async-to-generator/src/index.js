@@ -4,36 +4,76 @@ import type { NodePath } from "babel-traverse";
 import nameFunction from "babel-helper-function-name";
 import template from "babel-template";
 import * as t from "babel-types";
+import rewriteForAwait from "./for-await";
 
 let buildWrapper = template(`
   (() => {
-    var ref = FUNCTION;
+    var REF = FUNCTION;
     return function NAME(PARAMS) {
-      return ref.apply(this, arguments);
+      return REF.apply(this, arguments);
     };
   })
 `);
 
 let namedBuildWrapper = template(`
   (() => {
-    var ref = FUNCTION;
+    var REF = FUNCTION;
     function NAME(PARAMS) {
-      return ref.apply(this, arguments);
+      return REF.apply(this, arguments);
     }
     return NAME;
   })
 `);
 
 let awaitVisitor = {
-  ArrowFunctionExpression(path) {
-    if (!path.node.async) {
+  Function(path) {
+    if (path.isArrowFunctionExpression() && !path.node.async) {
       path.arrowFunctionToShadowed();
+      return;
+    }
+    path.skip();
+  },
+
+  AwaitExpression({ node }, { wrapAwait }) {
+    node.type = "YieldExpression";
+    if (wrapAwait) {
+      node.argument = t.callExpression(wrapAwait, [node.argument]);
     }
   },
 
-  AwaitExpression({ node }) {
-    node.type = "YieldExpression";
+  ForAwaitStatement(path, { file, wrapAwait }) {
+    let { node } = path;
+
+    let build = rewriteForAwait(path, {
+      getAsyncIterator: file.addHelper("asyncIterator"),
+      wrapAwait
+    });
+
+    let { declar, loop } = build;
+    let block = loop.body;
+
+    // ensure that it's a block so we can take all its statements
+    path.ensureBlock();
+
+    // add the value declaration to the new loop body
+    if (declar) {
+      block.body.push(declar);
+    }
+
+    // push the rest of the original loop body onto our new body
+    block.body = block.body.concat(node.body.body);
+
+    t.inherits(loop, node);
+    t.inherits(loop.body, node.body);
+
+    if (build.replaceParent) {
+      path.parentPath.replaceWithMultiple(build.node);
+      path.remove();
+    } else {
+      path.replaceWithMultiple(build.node);
+    }
   }
+
 };
 
 function classOrObjectMethod(path: NodePath, callId: Object) {
@@ -76,6 +116,7 @@ function plainFunction(path: NodePath, callId: Object) {
   let built = t.callExpression(callId, [node]);
   let container = wrapper({
     NAME: asyncFnId,
+    REF: path.scope.generateUidIdentifier("ref"),
     FUNCTION: built,
     PARAMS: node.params.map(() => path.scope.generateUidIdentifier("x"))
   }).expression;
@@ -110,15 +151,20 @@ function plainFunction(path: NodePath, callId: Object) {
   }
 }
 
-export default function (path: NodePath, callId: Object) {
-  let node = path.node;
-  if (node.generator) return;
-
-  path.traverse(awaitVisitor);
+export default function (path: NodePath, file: Object, helpers: Object) {
+  if (!helpers) {
+    // bc for 6.15 and earlier
+    helpers = { wrapAsync: file };
+    file = null;
+  }
+  path.traverse(awaitVisitor, {
+    file,
+    wrapAwait: helpers.wrapAwait
+  });
 
   if (path.isClassMethod() || path.isObjectMethod()) {
-    return classOrObjectMethod(path, callId);
+    classOrObjectMethod(path, helpers.wrapAsync);
   } else {
-    return plainFunction(path, callId);
+    plainFunction(path, helpers.wrapAsync);
   }
 }

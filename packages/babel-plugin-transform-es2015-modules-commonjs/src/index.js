@@ -1,5 +1,4 @@
 /* eslint max-len: 0 */
-/* global Symbol */
 
 import { basename, extname } from "path";
 import template from "babel-template";
@@ -34,7 +33,7 @@ let buildExportsAssignment = template(`
 
 let buildExportAll = template(`
   Object.keys(OBJECT).forEach(function (key) {
-    if (key === "default") return;
+    if (key === "default" || key === "__esModule") return;
     Object.defineProperty(exports, key, {
       enumerable: true,
       get: function () {
@@ -120,8 +119,7 @@ export default function () {
       }
       nodes.push(t.binaryExpression(operator, arg.node, t.numericLiteral(1)));
 
-      let newPaths = path.replaceWithMultiple(t.sequenceExpression(nodes));
-      for (const newPath of newPaths) this.requeueInParent(newPath);
+      path.replaceWithMultiple(t.sequenceExpression(nodes));
     }
   };
 
@@ -281,13 +279,18 @@ export default function () {
                   ]);
                 } else {
                   path.replaceWith(buildExportsAssignment(defNode, t.toExpression(declaration.node)));
+
+                  // Manualy re-queue `export default class {}` expressions so that the ES3 transform
+                  // has an opportunity to convert them. Ideally this would happen automatically from the
+                  // replaceWith above. See #4140 for more info.
+                  path.parentPath.requeue(path.get("expression.left"));
                 }
               } else {
                 path.replaceWith(buildExportsAssignment(t.identifier("default"), declaration.node));
 
                 // Manualy re-queue `export default foo;` expressions so that the ES3 transform
                 // has an opportunity to convert them. Ideally this would happen automatically from the
-                // replaceWith above. See T7166 for more info.
+                // replaceWith above. See #4140 for more info.
                 path.parentPath.requeue(path.get("expression.left"));
               }
             } else if (path.isExportNamedDeclaration()) {
@@ -332,7 +335,6 @@ export default function () {
               }
 
               let specifiers = path.get("specifiers");
-              if (specifiers.length) {
                 let nodes = [];
                 let source = path.node.source;
                 if (source) {
@@ -365,7 +367,6 @@ export default function () {
                   }
                 }
                 path.replaceWithMultiple(nodes);
-              }
             } else if (path.isExportAllDeclaration()) {
               hasNamedExport = true;
               let exportNode = buildExportAll({

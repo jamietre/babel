@@ -221,6 +221,12 @@ export default function ({ types: t }) {
       for (let elem of (arr.elements: Array)) {
         // deopt on spread elements
         if (t.isSpreadElement(elem)) return false;
+
+        // deopt call expressions as they might change values of LHS variables
+        if (t.isCallExpression(elem)) return false;
+
+        // deopt on member expressions as they may be getter/setters and have side-effects
+        if (t.isMemberExpression(elem)) return false;
       }
 
       // deopt on reference to left side identifiers
@@ -327,14 +333,14 @@ export default function ({ types: t }) {
 
   return {
     visitor: {
-      ExportNamedDeclaration(path){
+      ExportNamedDeclaration(path) {
         let declaration = path.get("declaration");
         if (!declaration.isVariableDeclaration()) return;
         if (!variableDeclarationHasPattern(declaration.node)) return;
 
         let specifiers = [];
 
-        for (let name in path.getOuterBindingIdentifiers(path)){
+        for (let name in path.getOuterBindingIdentifiers(path)) {
           let id = t.identifier(name);
           specifiers.push(t.exportSpecifier(id, id));
         }
